@@ -1,2 +1,2 @@
 # repo
-Readme Update
+My first commit to GitHub with R
