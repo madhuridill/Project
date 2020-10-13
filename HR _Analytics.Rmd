@@ -1,0 +1,730 @@
+---
+title: "HR Analytics Promotions Project"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+Libraries Used
+
+```{r}
+library(data.table)
+library(dplyr)
+library(caret)
+library(ggplot2)
+library(plyr)
+library(randomForest)
+library(tree)
+library(MASS)
+library(MVA)
+library(htmltools)
+library(base)
+library(mlr)
+library(FSelector)
+library(ROSE)
+library(rpart)
+library(regclass)
+library(e1071)
+library(pROC)
+library(DMwR)
+library(randomForest)
+
+
+```
+
+Exploratory Data Analysis
+
+*** Data Importing ***
+
+```{r}
+setwd('C:/Users/harsh/Desktop/MITA/Fall 2019 Sem 2/DAV/Datasets/')
+hr_analytics= read.csv("HR Analytics.csv", stringsAsFactors=FALSE, header=T, na.strings=c(""))
+
+```
+
+*** There are 14 attributes in the data set and 54808 observations ***
+
+** Categorical Variables **
+ 1. employee_id
+ 2. department
+ 3. region
+ 4. education
+ 5. gender
+ 6. recruitment_channel
+ 7. age
+ 8. previous_year_rating
+ 9. KPIs_met>80%
+ 10.awards won
+
+** Quantitative Variables ** 
+ 1. no_of_trainings
+ 2. length_of_service
+ 3. avg_training_score
+ 
+** Target Variable **
+ 1. is_promoted
+
+
+** Converting dataframe into data table for flexibility ***
+
+```{r}
+setDT(hr_analytics)
+```
+
+** Checking for NA Values in the data set, column 9  which is previous_year_rating is having NA values ***
+
+```{r}
+grep('NA',hr_analytics)
+```
+
+*** Addressing NA's ***
+
+** length of service where previous year rating is NA, 
+seems like since person is joined recently previous year rating is not available **
+
+```{r}
+relation<-hr_analytics[is.na(previous_year_rating),.(length_of_service,previous_year_rating)]
+unique(relation$length_of_service)
+
+```
+
+*** Replacing NA values in previous year rating with zeros ***
+
+```{r}
+hr_analytics[is.na(previous_year_rating),previous_year_rating:=0]
+```
+
+```{r}
+unique(hr_analytics$previous_year_rating)
+```
+
+```{r}
+str(hr_analytics)
+```
+
+*** Converting categorical columns into factors for better analysis ***
+
+```{r}
+hr_analytics[,employee_id:=factor(employee_id)]
+hr_analytics[,department:=factor(department)]
+hr_analytics[,region:=factor(region)]
+hr_analytics[,gender:=factor(gender,levels=c('m','f'),labels=c(0,1))]
+hr_analytics[,recruitment_channel:=factor(recruitment_channel)]
+hr_analytics[,KPIs_met..80.:=factor(KPIs_met..80.)]
+hr_analytics[,awards_won.:=factor(awards_won.)]
+hr_analytics[,previous_year_rating:=factor(previous_year_rating)]
+```
+
+
+```{r}
+str(hr_analytics$age)
+```
+
+*** Converting education into factor and adding NA as a level for better analysis ***
+
+```{r}
+hr_analytics$education<-addNA(hr_analytics$education)
+```
+
+
+```{r}
+levels(hr_analytics$education)
+```
+
+```{r}
+hr_analytics[,is_promoted:=factor(is_promoted)]
+```
+
+```{r}
+hr_analytics$education<-addNA(hr_analytics$education)
+```
+
+
+*** EDA for categorical variables *** 
+
+# Set Column Classes
+
+```{r}
+factcols<-c(1:7,9,11,12,14)
+numcols<-setdiff(1:14,factcols)
+```
+
+```{r}
+hr_analytics[,(factcols):=lapply(.SD,factor),.SDcols=factcols]
+hr_analytics[,(numcols):=lapply(.SD,as.numeric),.SDcols=numcols]
+```
+
+```{r}
+str(hr_analytics)
+```
+
+*** Seperating categorical and numerical columns for further analysis ***
+
+```{r}
+cat_hr_analytics<-hr_analytics[,factcols,with=FALSE]
+str(cat_hr_analytics)
+
+```
+
+```{r}
+num_hr_analytics<-hr_analytics[,numcols,with=FALSE]
+```
+
+
+*** Let's begin with numerical data now ***
+
+```{r}
+library(ggplot2)
+library(plotly)
+```
+
+# Analyzing Categorical Variables, dodged bar chart
+
+```{r}
+all_bar <- function(i){
+ ggplot(cat_hr_analytics,aes(x=i,fill=is_promoted))+geom_bar(position = "dodge",  color="black")+scale_fill_brewer(palette = "Pastel1")+theme(axis.text.x =element_text(angle  = 60,hjust = 1,size=10))
+}
+```
+
+# Department : We observe that even though Sales & Marketing department is big, employees recommended are very few, in other departments like Analytics, Operations, Technology, Procurement employee recommendation is relatively good
+
+```{r}
+all_bar(cat_hr_analytics$department)
+
+```
+
+
+# Region:Region 7,22,19 have high recommendation for promotions
+
+```{r}
+all_bar(cat_hr_analytics$region)
+```
+
+
+# Education: People who are recommended for promotion mostly hold a Bachelor's Degree
+
+```{r}
+all_bar(cat_hr_analytics$education)
+
+```
+# Gender: Female data is more but rate of recommendation is less. Male data is less and rate of recommendation is high comparitively
+
+```{r}
+prop.table(table(hr_analytics$gender,hr_analytics$is_promoted))
+
+```
+
+
+```{r}
+all_bar(cat_hr_analytics$gender)
+
+```
+
+# Recruitment Channel : Employees recruited from other channel have higher probability of being recommended for promotion
+
+```{r}
+all_bar(cat_hr_analytics$recruitment_channel)
+
+```
+
+
+# Number of trainings: It doesn't seem to add much value to the recommendation 
+
+```{r}
+all_bar(cat_hr_analytics$no_of_trainings)
+
+```
+
+# Age:  bin age variable 20-30 31-40 41-50 51-60
+
+```{r}
+#num_hr_analytics[,age:=hr_analytics$age]
+#str(num_hr_analytics)
+num_hr_analytics[,age:=cut(x=age,breaks=c(20,30,40,50,60),include.lowest = TRUE)]
+num_hr_analytics[,age:=factor(age)]
+unique(num_hr_analytics$age)
+```
+
+
+# Age: There is no significant observation from the age variable for employee promotion recommendation, we will verify the realtionship of 
+age with other variables for further analysis
+
+```{r}
+all_bar(num_hr_analytics$age)
+```
+
+# Previous Year Rating : Employees with previous year rating of 5 have fair amount of chance of being recommended for promotion
+
+```{r}
+all_bar(cat_hr_analytics$previous_year_rating)
+```
+
+# KPI's met >80%: Employees who have KPI's greater than 80 have higher chances of being recommended for promotion
+
+```{r}
+
+all_bar(cat_hr_analytics$KPIs_met..80.)
+
+```
+
+
+
+# Awards Won: People who have not won more awards are not likely to be recommended for promotion
+
+```{r}
+all_bar(cat_hr_analytics$awards_won.)
+```
+
+# is_promoted: This indicates an huge imbalance in the target variable for classification. This issue needs to be addressed before modeling. 
+
+```{r}
+all_bar(cat_hr_analytics$is_promoted)
+```
+
+```{r}
+prop.table(table(cat_hr_analytics$is_promoted))
+```
+
+# Exploring Numerical Variables
+
+# As of now adding is_promoted categorical variable to numerical data for visualization
+
+```{r}
+num_hr_analytics$is_promoted<-hr_analytics$is_promoted
+```
+
+```{r}
+tr <- function(a){
+  ggplot(data = num_hr_analytics, aes(x= a, y=..density..)) + 
+  geom_histogram(fill="blue",color="red",alpha = 0.5,bins =100) + 
+  geom_density()
+  ggplotly()
+ 
+}
+```
+
+# Length_of_Service: Distribution shows a right skewness 
+
+```{r}
+tr(num_hr_analytics$length_of_service)
+```
+
+# Avg_Training_Score: Skewness is not evident in the distribution
+
+```{r}
+tr(num_hr_analytics$avg_training_score)
+```
+
+
+#  Avg_training_score vs Age: Higher the average score across all ages, are highly recommended for promotion
+
+```{r}
+num_hr_analytics[,age:=NULL]
+num_hr_analytics[,age:=hr_analytics$age]
+```
+
+
+```{r}
+# create scatter plot
+ggplot(data=num_hr_analytics,aes(x=age,y=avg_training_score))+geom_point(aes(colour=is_promoted))+scale_y_continuous("avg_training_score",breaks = seq(0,100,5))
+```
+
+# Length of Services vs Recommendation : Employees whose length of service is in the range of 1 to 10 years are highly recommended for promotion
+
+```{r}
+ggplot(data=num_hr_analytics,aes(x=length_of_service,fill=is_promoted))+geom_histogram(bins=10)
+```
+
+# Length of Service vs Avg Training Score : Employees with length of service of 1 to 11 years along with high average training scores are highly recommended for promotion
+
+```{r}
+# create scatter plot
+ggplot(data=num_hr_analytics,aes(x=length_of_service,y=avg_training_score))+geom_point(aes(colour=is_promoted))+scale_y_continuous("avg_training_score",breaks = seq(0,100,5))
+```
+# Removing reduntant is_promoted and age from numerical data
+
+```{r}
+num_hr_analytics[,age:=NULL]
+num_hr_analytics[,is_promoted:=NULL]
+```
+
+```{r}
+str(num_hr_analytics)
+```
+# Adding age back to categorical data
+
+```{r}
+cat_hr_analytics[,age:=hr_analytics$age]
+cat_hr_analytics[,age:=cut(x=age,breaks=c(20,30,40,50,60),include.lowest = TRUE)]
+cat_hr_analytics[,age:=factor(age)]
+unique(cat_hr_analytics$age)
+cat_hr_analytics[,no_of_trainings:=NULL]
+num_hr_analytics[,no_of_trainings:=hr_analytics$no_of_trainings]
+```
+
+```{r}
+str(cat_hr_analytics)
+```
+# Replacing NA's with 'Unavailable' before applying Models
+
+```{r}
+# Convert to characters
+cat_hr_analytics<-cat_hr_analytics[,names(cat_hr_analytics):=lapply(.SD,as.character),.SDcols=names(cat_hr_analytics)]
+for( i in names(cat_hr_analytics))
+{
+ 
+  if(length(which(is.na(cat_hr_analytics[[i]]))>0))
+  {
+    cat_hr_analytics[[i]][is.na(cat_hr_analytics[[i]])]<-'Unavailable'
+  }
+  
+}
+# convert back to factors
+cat_hr_analytics<-cat_hr_analytics[,names(cat_hr_analytics):=lapply(.SD,factor),.SDcols=names(cat_hr_analytics)]
+grep('NA',cat_hr_analytics)
+```
+
+```{r}
+str(num_hr_analytics)
+```
+
+
+# Machine Learning
+
+```{r}
+rm(hr_analytics)
+```
+
+# Combine numerical and categorical data
+
+```{r}
+hr_analytics<-cbind(cat_hr_analytics,num_hr_analytics)
+```
+
+```{r}
+unique(hr_analytics$is_promoted)
+```
+
+
+```{r}
+str(hr_analytics)
+```
+
+# Making train and test data
+
+```{r}
+# Random sample indexes
+train_index = sample(1:nrow(hr_analytics), 0.75 * nrow(hr_analytics))
+test_index= setdiff(1:nrow(hr_analytics), train_index)
+# Build train and test sets
+train_set = hr_analytics[train_index, ]
+test_set = hr_analytics[test_index, ]
+setDF(train_set)
+setDF(test_set)
+```
+
+```{r}
+str(train_set)
+```
+
+# Create task
+
+```{r}
+train_feat_imp<-train_set[,-1]
+setDF(train_feat_imp)
+test_feat_imp<-test_set[,-1]
+setDF(test_feat_imp)
+train.task <- makeClassifTask(data = train_feat_imp,target = "is_promoted")
+test.task <- makeClassifTask(data=test_feat_imp,target = "is_promoted")
+
+levels(test_feat_imp$no_of_trainings)
+```
+
+# Variable Importance Chart
+
+```{r}
+# get variable importance chart
+var_imp<-generateFilterValuesData(train.task,method=c('FSelector_information.gain'))
+plotFilterValues(var_imp,feat.type.cols=FALSE)
+```
+
+```{r}
+write.csv(data.rose, "C:/Users/harsh/Desktop/MITA/Fall 2019 Sem 2/DAV/Datasets/promotion_rose.csv")
+```
+
+```{r}
+write.csv(test_feat_imp, "C:/Users/harsh/Desktop/MITA/Fall 2019 Sem 2/DAV/Datasets/promotion_test.csv")
+```
+
+
+# Handling Imbalanced Data
+
+```{r}
+data.rose<-ROSE(is_promoted~.,data=train_feat_imp,seed=1)$data
+table(data.rose$is_promoted)
+```
+# Recursive Partitioning(rpart) with ROSE data
+
+```{r}
+tree.both<-rpart(is_promoted~.,data=data.rose)
+```
+
+```{r}
+pred.tree.rose<-predict(tree.both,newdata=test_feat_imp)
+```
+
+```{r}
+roc.curve(test_feat_imp$is_promoted,pred.tree.rose[,2])
+```
+# Random Forest using ROSE
+
+# In case of prediction on train dataset, there is zero misclassification; however, in the case of validation dataset, 6 data points are misclassified and accuracy is 82.44%.
+
+```{r}
+rfrose<-randomForest(is_promoted ~., data=data.rose,importance=TRUE)
+```
+
+# Fine tuning parameters of Random Forest model
+
+```{r}
+rfrosetune1<-randomForest(is_promoted ~., data=data.rose,ntree=500,mtry=10,importance=TRUE)
+```
+
+```{r}
+# Predicting on train set
+predTrain.rose<-predict(rfrosetune1,data.rose,type='class')
+# Checking classification accuracy
+table(predTrain.rose,data.rose$is_promoted)
+```
+
+
+```{r}
+# Predicting on validation set
+predValid.rose<-predict(rfrosetune1,test_feat_imp,type='class')
+# Checking classification accuracy
+table(predValid.rose,test_feat_imp$is_promoted)
+```
+
+```{r}
+mean(predValid.rose==test_feat_imp$is_promoted)
+```
+
+```{r}
+importance(rfrosetune1)
+```
+
+```{r}
+varImpPlot(rfrosetune1)
+```
+
+# Use for loop and check for different values of mtry
+
+```{r}
+accuracy=c()
+for(i in 2:13){
+  rfrosetune2<-randomForest(is_promoted ~., data=data.rose,ntree=500,mtry=i,importance=TRUE)
+  predValid.rosetune<-predict(rfrosetune2,test_feat_imp,type='class')
+  accuracy[i-2]<-mean(predValid.rosetune==test_feat_imp$is_promoted)
+}
+```
+# Random Forest with Cross-Validation
+
+```{r}
+ctrl = trainControl(method = "repeatedcv", 
+                     number = 10, 
+                     repeats = 10, 
+                     verboseIter = FALSE
+                     )
+modelRF3 = caret::train(is_promoted ~ .,
+                         data = data.rose,
+                         method = "rf",
+                         preProcess = c("scale", "center"),
+                         trControl = ctrl)
+```
+
+
+
+# Logistic Regression using ROSE
+
+```{r}
+logistic_regres <- glm( is_promoted ~. ,data=data.rose, family="binomial")
+summary(logistic_regres)
+```
+
+```{r}
+#probablity_pred
+predicted.rose<-data.frame(probability.of.recommended=logistic_regres$fitted.values,is_promoted=data.rose$is_promoted)
+predicted.rose <- predicted.rose[order(predicted.rose$probability.of.recommended, decreasing=FALSE),]
+predicted.rose$rank <- 1:nrow(predicted.rose)
+```
+
+```{r}
+ggplot(data=predicted.rose, aes(x=rank, y=probability.of.recommended)) +
+geom_point(aes(color=is_promoted), alpha=1, shape=4, stroke=2) +
+xlab("Index") +
+ylab("Predicted probability of recommending for promotion")
+```
+
+```{r}
+confusion_matrix(logistic_regres)
+```
+
+
+```{r}
+pdata <- predict(logistic_regres,newdata=test_feat_imp,type="response")
+data.rose$is_promoted=as.factor(data.rose$is_promoted)
+test_feat_imp$is_promoted=as.factor(test_feat_imp$is_promoted)
+pdataF<- as.factor(ifelse(test=as.numeric(pdata>0.54)==0,yes=0,no=1))
+```
+
+
+```{r}
+confusionMatrix(pdataF,test_feat_imp$is_promoted)
+roc(data.rose$is_promoted,logistic_regres$fitted.values,plot=TRUE)
+roc(data.rose$is_promoted,logistic_regres$fitted.values,plot=TRUE, legacy.axes=TRUE, xlab="False Positive Percentage", ylab="True Postive Percentage", col="#377eb8", lwd=4,print.auc= TRUE)
+```
+
+# Stepwise variable selection using BIC didn't make any change to the accuracy
+
+# Stepwise variable selection using AIC didn't make any change to the accuracy
+
+
+# SVM using ROSE
+
+```{r}
+x.svm <- svm(is_promoted~., data = data.rose, cost=1, gamma=0.25, probability = TRUE)
+x.svm.prob <- predict(x.svm, type="prob", newdata=test_feat_imp, probability = TRUE)
+str(cat_hr_analytics)
+```
+
+
+
+
+
+# Handling Imbalance using SMOTE
+
+```{r}
+balanced.data <- SMOTE(is_promoted ~., train_feat_imp)
+table(balanced.data$is_promoted)
+```
+
+
+# Recursive Partitioning(rpart) with SMOTE data
+
+```{r}
+tree.smote<-rpart(is_promoted~.,data=balanced.data)
+```
+
+```{r}
+pred.tree.smote<-predict(tree.smote,newdata=test_feat_imp)
+```
+
+```{r}
+roc.curve(test_feat_imp$is_promoted,pred.tree.smote[,2])
+```
+# Random Forest using SMOTE
+
+```{r}
+rfsmote<-randomForest(is_promoted ~., data=balanced.data,importance=TRUE)
+```
+
+# Fine tuning parameters of Random Forest model
+
+```{r}
+rfsmotetune1<-randomForest(is_promoted ~., data=balanced.data,ntree=500,mtry=10,importance=TRUE)
+```
+
+```{r}
+# Predicting on train set
+predTrain.smote<-predict(rfrosetune1,balanced.data,type='class')
+# Checking classification accuracy
+table(predTrain.smote,balanced.data$is_promoted)
+```
+
+```{r}
+# Predicting on validation set
+predValid.smote<-predict(rfsmotetune1,test_feat_imp,type='class')
+# Checking classification accuracy
+table(predValid.smote,test_feat_imp$is_promoted)
+```
+
+```{r}
+mean(predValid.smote==test_feat_imp$is_promoted)
+```
+
+```{r}
+importance(rfsmotetune1)
+```
+
+```{r}
+varImpPlot(rfsmotetune1)
+```
+
+
+# Use for loop and check for different values of mtry
+
+```{r}
+accuracy=c()
+for(i in 2:13){
+  rfsmotetune2<-randomForest(is_promoted ~., data=balanced.data,ntree=500,mtry=i,importance=TRUE)
+  predValid.smotetune<-predict(rfsmotetune2,test_feat_imp,type='class')
+  accuracy[i-2]<-mean(predValid.smotetune==test_feat_imp$is_promoted)
+}
+```
+
+```{r}
+print('hello')
+```
+
+
+# Logistic Regression with SMOTE data
+
+```{r}
+logistic_smote <- glm( is_promoted ~. ,data=balanced.data,na.action = na.omit,family="binomial")
+summary(logistic_smote)
+```
+
+```{r}
+#probablity_pred
+predicted.smote<-data.frame(probability.of.recommended=logistic_smote$fitted.values,is_promoted=balanced.data$is_promoted)
+predicted.smote <- predicted.smote[order(predicted.smote$probability.of.recommended, decreasing=FALSE),]
+predicted.smote$rank <- 1:nrow(predicted.smote)
+```
+
+```{r}
+ggplot(data=predicted.smote, aes(x=rank, y=probability.of.recommended)) +
+geom_point(aes(color=is_promoted), alpha=1, shape=4, stroke=2) +
+xlab("Index") +
+ylab("Predicted probability of recommending for promotion")
+```
+
+```{r}
+confusion_matrix(logistic_smote)
+```
+
+```{r}
+psmote <- predict(logistic_smote,newdata=test_feat_imp,type="response")
+balanced.data$is_promoted=as.factor(balanced.data$is_promoted)
+test_feat_imp$is_promoted=as.factor(test_feat_imp$is_promoted)
+smotedataF<- as.factor(ifelse(test=as.numeric(psmote>0.54)==0,yes=0,no=1))
+```
+
+
+```{r}
+confusionMatrix(smotedataF,test_feat_imp$is_promoted)
+roc(balanced.data$is_promoted,logistic_smote$fitted.values,plot=TRUE)
+roc(balanced.data$is_promoted,logistic_smote$fitted.values,plot=TRUE, legacy.axes=TRUE, xlab="False Positive Percentage", ylab="True Postive Percentage", col="#377eb8", lwd=4,print.auc= TRUE)
+```
+ # SVM using SMOTE
+ 
+```{r}
+model = svm(is_promoted ~. , data = balanced.data)
+pred = predict(model,test_feat_imp[,-9])
+```
+ 
+```{r}
+accuracy = sum(diag(table(test_feat_imp$is_promoted,pred)))/nrow(test_feat_imp)
+```
+
+
